@@ -6,7 +6,18 @@
 //THIS IS NOT A CLEAN VERSION OF DREHMFLIGHT VTOL. UPDATES MADE FOR THE F-35 TRICOPTER VTOL. CLEAN VERSION AVAILABLE HERE: https://github.com/nickrehm/dRehmFlight
 //WATCH THE F-35 TUTORIAL VIDEO HERE: https://www.youtube.com/watch?v=RqdcZD0ZoUk
 
-
+/*
+ * 
+ * If you are using this for an academic or scholarly project, please credit me in any presentations or publications:
+ *
+ * Nicholas Rehm
+ * Department of Aerospace Engineering
+ * University of Maryland
+ * College Park 20742
+ * Email: nrehm@umd.edu
+ *
+ */
+ 
 //========================================================================================================================//
 
 //CREDITS + SPECIAL THANKS
@@ -25,24 +36,22 @@ brian.taylor@bolderflight.com
 http://www.bolderflight.com
 
 
-//========================================================================================================================//
-//                              Результати тесту                                                                          //
-//========================================================================================================================//
-//початковий код тесту:   dRehmFlight_Teensy_BETA_1_2_F_35VTOL
-//Симптоми:Збірка жива,серво і мотори працюють.При підвищені газу десь до 40% мотори відключаються.ESC видає постійний біп
-//         сигнал з частотою десь 2-3 бып в секунду
+Thank you to:
+
+RcGroups 'jihlein' - IMU implementation overhaul + SBUS implementation
+
+*/
+// insert 357-371
+// version corrected 1/02/2026 by GitHub Copilot & all radio comands works
 //
 //
 //
 //
 //
 //
-//
-//
-//
-//
-//
-//
+
+
+
 //========================================================================================================================//
 //                                                 USER-SPECIFIED DEFINES                                                 //                                                                 
 //========================================================================================================================//
@@ -57,8 +66,8 @@ http://www.bolderflight.com
 //#define USE_MPU9250_SPI
 
 //Uncomment only one full scale gyro range (deg/sec)
-#define GYRO_250DPS //default
-//#define GYRO_500DPS
+//#define GYRO_250DPS //default
+#define GYRO_500DPS
 //#define GYRO_1000DPS
 //#define GYRO_2000DPS
 
@@ -93,7 +102,12 @@ http://www.bolderflight.com
 #else
   #error No MPU defined... 
 #endif
+
+
+
 //========================================================================================================================//
+
+
 
 //Setup gyro and accel full scale value selection and scale factor
 
@@ -239,7 +253,12 @@ PWMServo servo4;
 PWMServo servo5;
 PWMServo servo6;
 PWMServo servo7;
+
+
+
 //========================================================================================================================//
+
+
 
 //DECLARE GLOBAL VARIABLES
 
@@ -252,7 +271,9 @@ bool blinkAlternate;
 
 //Radio comm:
 unsigned long channel_1_pwm, channel_2_pwm, channel_3_pwm, channel_4_pwm, channel_5_pwm, channel_6_pwm;
+// Додайте поруч з іншими channel_x_pwm_prev оголошеннями:
 unsigned long channel_1_pwm_prev, channel_2_pwm_prev, channel_3_pwm_prev, channel_4_pwm_prev;
+unsigned long channel_5_pwm_prev, channel_6_pwm_prev; // <<< ДОДАНО
 
 #if defined USE_SBUS_RX
   SBUS sbus(Serial5);
@@ -335,7 +356,22 @@ void setup() {
   channel_4_pwm = channel_4_fs;
   channel_5_pwm = channel_5_fs;
   channel_6_pwm = channel_6_fs;
+  // --- INIT: timing and previous-channel vars to avoid startup glitches ----
+  current_time = micros();
+  prev_time = current_time;
+  print_counter = current_time;
+  blink_counter = current_time;
+  blink_delay = 2000000; // default
+  blinkAlternate = 1;
 
+  // Initialize previous-channel values so the low-pass filter doesn't use garbage
+  channel_1_pwm_prev = channel_1_pwm;
+  channel_2_pwm_prev = channel_2_pwm;
+  channel_3_pwm_prev = channel_3_pwm;
+  channel_4_pwm_prev = channel_4_pwm;
+  channel_5_pwm_prev = channel_5_pwm;
+  channel_6_pwm_prev = channel_6_pwm;
+  // ------------------------------------------------------------------------
   //Initialize IMU communication
   IMUinit();
 
@@ -380,6 +416,9 @@ void setup() {
   //calibrateMagnetometer(); //generates magentometer error and scale factors
 
 }
+
+
+
 //========================================================================================================================//
 //                                                       MAIN LOOP                                                        //                           
 //========================================================================================================================//
@@ -392,7 +431,7 @@ void loop() {
   loopBlink(); //indicate we are in main loop with short blink every 1.5 seconds
 
   //Print data at 100hz (uncomment one at a time for troubleshooting) - SELECT ONE:
-  //printRadioData();     //radio pwm values (expected: 1000 to 2000)
+  printRadioData();     //radio pwm values (expected: 1000 to 2000)
   //printDesiredState();  //prints desired vehicle state commanded in either degrees or deg/sec (expected: +/- maxAXIS for roll, pitch, yaw; 0 to 1 for throttle)
   //printGyroData();      //prints filtered gyro data direct from IMU (expected: ~ -250 to 250, 0 at rest)
   //printAccelData();     //prints filtered accelerometer data direct from IMU (expected: ~ -2 to 2; x,y 0 when level, z 1 when level)
@@ -439,6 +478,9 @@ void loop() {
   //Regulate loop rate
   loopRate(2000); //do not exceed 2000Hz, all filter parameters tuned to 2000Hz by default
 }
+
+
+
 //========================================================================================================================//
 //                                                      FUNCTIONS                                                         //                           
 //========================================================================================================================//
@@ -1100,7 +1142,7 @@ void controlMixer() {
 
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
   //Flight mode 2 - Transition
-  if (channel_6_pwm < 1700 & channel_6_pwm > 1300) {
+  if (channel_6_pwm < 1700 && channel_6_pwm > 1300) {
     maxRoll = 180.0;    //max roll angle in degrees for angle mode, deg/sec for rate mode
     maxPitch = 180.0;   //max pitch angle in degrees for angle mode, deg/sec for rate mode
     maxYaw = 160.0;    //max yaw rate in degrees/sec
@@ -1228,47 +1270,59 @@ void scaleCommands() {
 }
 
 void getCommands() {
-  //DESCRIPTION: Get raw PWM values for every channel from the radio
-  /*
-   * Updates radio PWM commands in loop based on current available commands. channel_x_pwm is the raw command used in the rest of 
-   * the loop. If using a PWM or PPM receiver, the radio commands are retrieved from a function in the readPWM file separate from this one which 
-   * is running a bunch of interrupts to continuously update the radio readings. If using an SBUS receiver, the alues are pulled from the SBUS library directly.
-   * The raw radio commands are filtered with a first order low-pass filter to eliminate any really high frequency noise. 
-   */
+  // Read raw radio values first
+  unsigned long raw1 = channel_1_pwm;
+  unsigned long raw2 = channel_2_pwm;
+  unsigned long raw3 = channel_3_pwm;
+  unsigned long raw4 = channel_4_pwm;
+  unsigned long raw5 = channel_5_pwm;
+  unsigned long raw6 = channel_6_pwm;
 
   #if defined USE_PPM_RX || defined USE_PWM_RX
-    channel_1_pwm = getRadioPWM(1);
-    channel_2_pwm = getRadioPWM(2);
-    channel_3_pwm = getRadioPWM(3);
-    channel_4_pwm = getRadioPWM(4);
-    channel_5_pwm = getRadioPWM(5);
-    channel_6_pwm = getRadioPWM(6);
-    
+    raw1 = getRadioPWM(1);
+    raw2 = getRadioPWM(2);
+    raw3 = getRadioPWM(3);
+    raw4 = getRadioPWM(4);
+    raw5 = getRadioPWM(5);
+    raw6 = getRadioPWM(6);
   #elif defined USE_SBUS_RX
     if (sbus.read(&sbusChannels[0], &sbusFailSafe, &sbusLostFrame))
     {
-      //sBus scaling below is for Taranis-Plus and X4R-SB
       float scale = 0.615;  
       float bias  = 895.0; 
-      channel_1_pwm = sbusChannels[0] * scale + bias;
-      channel_2_pwm = sbusChannels[1] * scale + bias;
-      channel_3_pwm = sbusChannels[2] * scale + bias;
-      channel_4_pwm = sbusChannels[3] * scale + bias;
-      channel_5_pwm = sbusChannels[4] * scale + bias;
-      channel_6_pwm = sbusChannels[5] * scale + bias; 
+      raw1 = (unsigned long)(sbusChannels[0] * scale + bias);
+      raw2 = (unsigned long)(sbusChannels[1] * scale + bias);
+      raw3 = (unsigned long)(sbusChannels[2] * scale + bias);
+      raw4 = (unsigned long)(sbusChannels[3] * scale + bias);
+      raw5 = (unsigned long)(sbusChannels[4] * scale + bias);
+      raw6 = (unsigned long)(sbusChannels[5] * scale + bias);
     }
   #endif
-  
-  //Low-pass the critical commands and update previous values
-  float b = 0.2; //lower=slower, higher=noiser
-  channel_1_pwm = (1.0 - b)*channel_1_pwm_prev + b*channel_1_pwm;
-  channel_2_pwm = (1.0 - b)*channel_2_pwm_prev + b*channel_2_pwm;
-  channel_3_pwm = (1.0 - b)*channel_3_pwm_prev + b*channel_3_pwm;
-  channel_4_pwm = (1.0 - b)*channel_4_pwm_prev + b*channel_4_pwm;
+
+  // Apply low-pass filter using previous filtered value (avoid using uninitialized memory)
+  float b = 0.2; // lower = slower, higher = noisier
+  float f1 = (1.0f - b) * (float)channel_1_pwm_prev + b * (float)raw1;
+  float f2 = (1.0f - b) * (float)channel_2_pwm_prev + b * (float)raw2;
+  float f3 = (1.0f - b) * (float)channel_3_pwm_prev + b * (float)raw3;
+  float f4 = (1.0f - b) * (float)channel_4_pwm_prev + b * (float)raw4;
+  float f5 = (1.0f - b) * (float)channel_5_pwm_prev + b * (float)raw5;
+  float f6 = (1.0f - b) * (float)channel_6_pwm_prev + b * (float)raw6;
+
+  // Write back to unsigned long channel variables
+  channel_1_pwm = (unsigned long)f1;
+  channel_2_pwm = (unsigned long)f2;
+  channel_3_pwm = (unsigned long)f3;
+  channel_4_pwm = (unsigned long)f4;
+  channel_5_pwm = (unsigned long)f5;
+  channel_6_pwm = (unsigned long)f6;
+
+  // Update previous values for next loop
   channel_1_pwm_prev = channel_1_pwm;
   channel_2_pwm_prev = channel_2_pwm;
   channel_3_pwm_prev = channel_3_pwm;
   channel_4_pwm_prev = channel_4_pwm;
+  channel_5_pwm_prev = channel_5_pwm;
+  channel_6_pwm_prev = channel_6_pwm;
 }
 
 void failSafe() {
@@ -1420,7 +1474,7 @@ float floatFaderLinear2(float param, float param_des, float param_lower, float p
   return param;
 }
 
-float switchRollYaw(int reverseRoll, int reverseYaw) {
+void switchRollYaw(int reverseRoll, int reverseYaw) {
   //DESCRIPTION: Switches roll_des and yaw_des variables for tailsitter-type configurations
   /*
    * Takes in two integers (either 1 or -1) corresponding to the desired reversing of the roll axis and yaw axis, respectively.
@@ -1560,7 +1614,19 @@ void setupBlink(int numBlinks,int upTime, int downTime) {
 }
 
 void printRadioData() {
-  if (current_time - print_counter > 10000) {
+  // Print only if any channel changed more than threshold OR every 200 ms (to avoid log flooding)
+  const unsigned long PRINT_INTERVAL = 200000; // microseconds = 200 ms
+  const unsigned int CHANGE_THRESH = 2; // pwm units
+
+  bool changed = false;
+  if (abs((long)channel_1_pwm - (long)channel_1_pwm_prev) > CHANGE_THRESH) changed = true;
+  if (abs((long)channel_2_pwm - (long)channel_2_pwm_prev) > CHANGE_THRESH) changed = true;
+  if (abs((long)channel_3_pwm - (long)channel_3_pwm_prev) > CHANGE_THRESH) changed = true;
+  if (abs((long)channel_4_pwm - (long)channel_4_pwm_prev) > CHANGE_THRESH) changed = true;
+  if (abs((long)channel_5_pwm - (long)channel_5_pwm_prev) > CHANGE_THRESH) changed = true;
+  if (abs((long)channel_6_pwm - (long)channel_6_pwm_prev) > CHANGE_THRESH) changed = true;
+
+  if ((current_time - print_counter > PRINT_INTERVAL) || changed) {
     print_counter = micros();
     Serial.print(F(" CH1: "));
     Serial.print(channel_1_pwm);
@@ -1574,9 +1640,16 @@ void printRadioData() {
     Serial.print(channel_5_pwm);
     Serial.print(F(" CH6: "));
     Serial.println(channel_6_pwm);
+
+    // keep prev in sync for printing checks (so we don't repeatedly print same values)
+    channel_1_pwm_prev = channel_1_pwm;
+    channel_2_pwm_prev = channel_2_pwm;
+    channel_3_pwm_prev = channel_3_pwm;
+    channel_4_pwm_prev = channel_4_pwm;
+    channel_5_pwm_prev = channel_5_pwm;
+    channel_6_pwm_prev = channel_6_pwm;
   }
 }
-
 void printDesiredState() {
   if (current_time - print_counter > 10000) {
     print_counter = micros();
